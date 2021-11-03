@@ -6,30 +6,11 @@ mod devices;
 
 use core::panic::PanicInfo;
 use devices::Devices;
-use hal::{
-    gpio::{
-        v2::{Alternate, OutputConfig, D, PA08, PA09},
-        Output, Pin, PinId,
-    },
-    pac::interrupt,
-    prelude::*,
-    sercom::{
-        v2::{Pad0, Pad1},
-        I2CError, I2CMaster2, Pad,
-    },
-    target_device::SERCOM2,
-};
+use hal::{pac::interrupt, prelude::*};
 
 use xiao_m0::{entry, hal};
 
 static mut HARDWARE: Option<Devices> = None;
-
-static mut I2C: Option<
-    I2CMaster2<
-        Pad<SERCOM2, Pad0, Pin<PA08, Alternate<D>>>,
-        Pad<SERCOM2, Pad1, Pin<PA09, Alternate<D>>>,
-    >,
-> = None;
 
 #[entry]
 fn main() -> ! {
@@ -39,17 +20,17 @@ fn main() -> ! {
     };
 
     hardware.delay(3000.ms());
+    loop {
+        hardware.stepper_enable();
+        for _ in 0..50 {
+            hardware.delay(100.ms());
+            hardware.stepper_step();
+        }
 
-    loop {}
+        hardware.stepper_disable();
+        hardware.delay(3000.ms());
+    }
 }
-
-// fn read_i2c<A, P0, P1>(address: A, start_reg: u8)
-// where
-//     A: AddressMode,
-//     P0: CompatiblePad<Sercom = SERCOM2, PadNum = Pad0>,
-//     P1: CompatiblePad<Sercom = SERCOM2, PadNum = Pad1>,
-// {
-// }
 
 #[interrupt]
 fn USB() {
@@ -67,11 +48,13 @@ fn poll_usb() {
 #[cfg(not(test))]
 #[inline(never)]
 #[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    HARDWARE.as_mut().map(|hw| {
-        hw.led0.off();
-        hw.led1.off();
-    });
+fn panic(_info: &PanicInfo) -> ! {
+    unsafe {
+        HARDWARE.as_mut().map(|hw| {
+            hw.led0.off();
+            hw.led1.off();
+        });
+    };
 
     loop {
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
