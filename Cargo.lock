@@ -386,15 +386,11 @@ dependencies = [
 
 [[package]]
 name = "xiao_m0"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13106ff193d21f2ae0292200abe379d076943bcd809a86d74579d8c952c2e6c9"
+checksum = "53b8a15c3048887b8e0bcfcfe471a36162a42897b1113da6307e7b2547ac13e8"
 dependencies = [
  "atsamd-hal",
- "cortex-m 0.6.7",
  "cortex-m-rt",
- "embedded-hal",
- "nb 0.1.3",
  "usb-device",
- "usbd-serial",
 ]

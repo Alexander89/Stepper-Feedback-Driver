@@ -1,28 +1,38 @@
 use atsamd_hal::{
     clock::GenericClockController,
-    gpio::{Floating, Input, Port},
-    sercom::{I2CError, I2CMaster2, Sercom2Pad0, Sercom2Pad1},
-};
-use xiao_m0::{
-    gpio::{self},
-    i2c_master, pac,
+    gpio::{
+        self,
+        v2::{AnyPin, Pin},
+        Floating, Input,
+    },
+    pac,
     prelude::*,
+    sercom::{
+        v2::{Pad0, Pad1},
+        CompatiblePad, I2CError, I2CMaster0, I2CMaster2, Sercom2Pad0, Sercom2Pad1,
+    },
+    target_device::SERCOM2,
+    time::Hertz,
 };
+use cortex_m::interrupt;
+use xiao_m0::{i2c_master, Scl, Sda, I2C};
 
 pub struct I2c {
-    main: I2CMaster2<Sercom2Pad0<gpio::Pa8<gpio::PfD>>, Sercom2Pad1<gpio::Pa9<gpio::PfD>>>,
+    main: I2C,
 }
 
 impl I2c {
     pub fn init(
         clocks: &mut GenericClockController,
-        sercom2: pac::SERCOM2,
+        sercom: pac::SERCOM0,
         pm: &mut pac::PM,
-        a4: gpio::Pa8<Input<Floating>>,
-        a5: gpio::Pa9<Input<Floating>>,
-        port: &mut Port,
+        sda: impl Into<Sda>,
+        scl: impl Into<Scl>,
     ) -> Self {
-        let main = i2c_master(clocks, 1.mhz(), sercom2, pm, a4, a5, port);
+        let gclk0 = clocks.gclk0();
+        let clock = &clocks.sercom0_core(&gclk0).unwrap();
+        let freq: Hertz = 1.mhz().into();
+        let main = I2CMaster0::new(clock, freq, sercom, pm, sda.into(), scl.into());
         Self { main }
     }
 
@@ -33,10 +43,10 @@ impl I2c {
         count: usize,
         buffer: &mut [u8],
     ) -> Result<(), I2CError> {
-        self.main.write(address, &[from])?;
+        interrupt::free(|_| self.main.write(address, &[from]))?;
         for i in 0..count {
             let mut res = [0u8];
-            self.main.read(address, &mut res)?;
+            interrupt::free(|_| self.main.read(address, &mut res))?;
             buffer[i] = res[0];
         }
         Ok(())
