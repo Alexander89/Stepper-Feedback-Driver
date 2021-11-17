@@ -72,7 +72,7 @@ impl ExtIntPin<PA01> {
             });
 
             unsafe {
-                nvic.set_priority(interrupt::EIC, 2);
+                nvic.set_priority(interrupt::EIC, 1);
                 NVIC::unmask(interrupt::EIC);
             }
         }

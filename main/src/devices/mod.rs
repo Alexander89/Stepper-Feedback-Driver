@@ -6,7 +6,11 @@ mod magnet_sensor;
 mod stepper;
 mod usb_serial;
 
-use atsamd_hal::gpio::v2::{PA08, PB09};
+use atsamd_hal::{
+    clock::ClockGenId,
+    gpio::v2::{PA08, PB09},
+    timer::TimerCounter,
+};
 use cortex_m::asm::nop;
 use usb_device::UsbError;
 use utils::num_to_string;
@@ -39,8 +43,8 @@ pub struct Devices {
 
     delay: Delay,
     // pub timer0: timer::TimerCounter3,
-    // pub timer1: timer::TimerCounter4,
-    // pub timer2: timer::TimerCounter5,
+    // pub timer3: timer::TimerCounter3,
+    // pub timer4: timer::TimerCounter4,
     pub led0: Led<PA17>,
     pub led1: Led<PA18>,
     pub led2: Led<PA19>,
@@ -121,7 +125,7 @@ impl Devices {
     pub fn stepper_ccw(&mut self) {
         self.stepper.ccw();
     }
-    pub fn stepper_poll(&mut self) {
+    pub fn poll_stepper(&mut self) {
         self.stepper.poll();
     }
 
@@ -162,13 +166,6 @@ impl Devices {
             &mut peripherals.NVMCTRL,
         );
 
-        // let generator = clocks.gclk0();
-        // let rtc = atsamd_hal::rtc::Rtc::count32_mode(
-        //     peripherals.RTC,
-        //     48.mhz().into(),
-        //     &mut peripherals.PM,
-        // );
-
         let mut pins = xiao_m0::Pins::new(peripherals.PORT);
 
         let serial = UsbSerial::init(
@@ -200,30 +197,8 @@ impl Devices {
         let led1 = Led::init(pins.led1.into_push_pull_output());
         let led2 = Led::init(pins.led2.into_push_pull_output());
 
-        // let button: ExtInt<PA07> = ExtInt::init(pins.a8.into_floating_interrupt(), &mut core);
-
         let delay = Delay::new(core.SYST, &mut clocks);
 
-        // let timer0 = timer::TimerCounter::tc3_(
-        //     &clocks.tcc2_tc3(&generator).unwrap(),
-        //     peripherals.TC3,
-        //     &mut peripherals.PM,
-        // );
-        // unsafe {
-        //     core.NVIC.set_priority(interrupt::TC3, 3);
-        //     NVIC::unmask(interrupt::TC3);
-        // };
-
-        // let timer1 = timer::TimerCounter::tc4_(
-        //     &clocks.tc4_tc5(&generator).unwrap(),
-        //     peripherals.TC4,
-        //     &mut peripherals.PM,
-        // );
-        // let timer2 = timer::TimerCounter::tc5_(
-        //     &clocks.tc4_tc5(&generator).unwrap(),
-        //     peripherals.TC5,
-        //     &mut peripherals.PM,
-        // );
         ExtIntPin::init(
             &mut clocks,
             &mut core.NVIC,
@@ -233,6 +208,48 @@ impl Devices {
         let enable = ExtIntPin::<PA06>::enable(pins.a10, super::enabled_changed);
         let step = ExtIntPin::<PA05>::enable(pins.a9, super::step_changed);
         let dir = ExtIntPin::<PB09>::enable(pins.a7, super::dir_changed);
+
+        // let generator = {
+        //     clocks.get_gclk(ClockGenId::GCLK2).unwrap_or_else(|| {
+        //         clocks
+        //             .configure_gclk_divider_and_source(
+        //                 ClockGenId::GCLK2,
+        //                 1,
+        //                 pac::gclk::genctrl::SRC_A::OSC32K,
+        //                 false,
+        //             )
+        //             .unwrap()
+        //     })
+        // };
+
+        // // configure a clock for the TC4 and TC5 peripherals
+        // let tc23_clock_gen = &clocks.tcc2_tc3(&generator).unwrap();
+        // // instantiate a timer object for the TC4 peripheral
+        // let mut timer3 = TimerCounter::tc3_(tc23_clock_gen, peripherals.TC3, &mut peripherals.PM);
+        // // start a 5Hz timer
+        // timer3.start(50.hz());
+        // // enable interrupt
+        // timer3.enable_interrupt();
+
+        // // Enable TC3 interrupt in the NVIC
+        // unsafe {
+        //     core.NVIC.set_priority(interrupt::TC3, 2);
+        //     NVIC::unmask(interrupt::TC3);
+        // }
+
+        // let tc45_clock_gen = &clocks.tc4_tc5(&generator).unwrap();
+        // // instantiate a timer object for the TC6 peripheral
+        // let mut timer4 = TimerCounter::tc4_(tc45_clock_gen, peripherals.TC4, &mut peripherals.PM);
+        // // start a 5Hz timer
+        // timer4.start(10.hz());
+        // // enable interrupt
+        // timer4.enable_interrupt();
+
+        // Enable TC4 interrupt in the NVIC
+        // unsafe {
+        //     core.NVIC.set_priority(interrupt::TC4, 2);
+        //     NVIC::unmask(interrupt::TC4);
+        // }
 
         Self {
             clocks,
@@ -251,9 +268,7 @@ impl Devices {
             enable,
             step,
             dir,
-            // timer0,
-            // timer1,
-            // timer2,
+            // timer3,
         }
     }
 }

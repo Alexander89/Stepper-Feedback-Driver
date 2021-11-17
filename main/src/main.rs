@@ -5,7 +5,10 @@
 mod devices;
 
 use devices::Devices;
-use hal::{pac::interrupt, prelude::*};
+use hal::{
+    pac::{self, interrupt},
+    prelude::*,
+};
 
 use xiao_m0::{entry, hal};
 
@@ -20,23 +23,28 @@ fn main() -> ! {
     hardware.led0.on();
 
     hardware.stepper_enable();
-    let mut divider = 25u8;
+
     loop {
         hardware.poll_magnet_sensor();
         hardware.poll_magnet_sensor_setup();
-
-        if divider == 0 {
-            let _ = hardware.serial_write_num(hardware.get_step() as usize);
-            // let _ = hardware.serial_write(b" ");
-            // let _ = hardware.serial_write_num(hardware.magnet_sensor.magnitude as usize);
-            let _ = hardware.serial_write(b"\r\n");
-            divider = 25;
-        } else {
-            divider -= 1;
-        }
-        hardware.stepper_poll();
-        hardware.delay_us(4_000.us());
+        hardware.poll_stepper();
+        hardware.delay_us(200.us());
     }
+}
+
+fn step_timer(_d_t: u32) {
+    unsafe { HARDWARE.as_mut() }.map(|hw| {
+        hw.led1.toggle();
+    });
+}
+
+fn debug_timer(_d_t: u32) {
+    unsafe { HARDWARE.as_mut() }.map(|hw| {
+        let _ = hw.serial_write_num(hw.get_step() as usize);
+        // let _ = hw.serial_write(b" ");
+        // let _ = hw.serial_write_num(hw.magnet_sensor.magnitude as usize);
+        let _ = hw.serial_write(b"\r\n");
+    });
 }
 
 fn dir_changed(state: bool) {
@@ -93,13 +101,29 @@ fn EIC() {
         });
     }
 }
+
+#[interrupt]
+fn TC3() {
+    unsafe {
+        HARDWARE.as_mut().map(|hw| {
+            hw.led1.toggle();
+        });
+    };
+}
 // #[interrupt]
 // fn TC3() {
-//     unsafe {
-//         HARDWARE.as_mut().map(|hw| {
-//             hw.led1.toggle();
-//         });
-//     };
+//     // Increase the counter and clear the interrupt.
+//     let p = unsafe { pac::TC3::ptr().as_ref() }.unwrap();
+//     p.count16().intflag.modify(|_, w| w.ovf().set_bit());
+//     step_timer(0);
+// }
+
+// #[interrupt]
+// fn TC4() {
+//     // Increase the counter and clear the interrupt.
+//     let p = unsafe { pac::TC4::ptr().as_ref() }.unwrap();
+//     p.count16().intflag.modify(|_, w| w.ovf().set_bit());
+//     // debug_timer(0);
 // }
 
 #[cfg(not(test))]
