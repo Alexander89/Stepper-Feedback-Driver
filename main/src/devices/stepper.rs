@@ -58,6 +58,10 @@ impl Stepper {
         }
     }
 
+    pub fn init_stepper(&mut self, start_value: i32) {
+        self.current_step = start_value;
+    }
+
     pub fn poll(&mut self) {
         if (self.current_step == self.target_step) {
             // nop / rest

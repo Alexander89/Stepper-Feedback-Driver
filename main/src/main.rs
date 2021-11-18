@@ -20,7 +20,8 @@ fn main() -> ! {
         HARDWARE = Some(Devices::init());
         HARDWARE.as_mut().unwrap()
     };
-    hardware.led0.on();
+
+    init(hardware);
 
     hardware.stepper_enable();
 
@@ -30,6 +31,32 @@ fn main() -> ! {
         hardware.poll_stepper();
         hardware.delay_us(200.us());
     }
+}
+
+fn init(hw: &mut Devices) {
+    hw.delay(100.ms());
+    hw.led0.on();
+    hw.poll_magnet_sensor();
+    hw.poll_magnet_sensor_setup();
+
+    let steps = hw.get_step();
+
+    while hw.magnet_sensor.magnitude < 2000 {
+        hw.led1.on();
+        hw.led2.off();
+        hw.delay(100.ms());
+        hw.led1.off();
+        hw.led2.on();
+        hw.delay(100.ms());
+
+        hw.poll_magnet_sensor_setup();
+    }
+
+    hw.init_stepper(steps as i32);
+
+    hw.execute_ext_int_pins();
+
+    hw.led0.off();
 }
 
 fn step_timer(_d_t: u32) {
@@ -125,7 +152,6 @@ fn TC3() {
 //     p.count16().intflag.modify(|_, w| w.ovf().set_bit());
 //     // debug_timer(0);
 // }
-
 #[cfg(not(test))]
 #[inline(never)]
 #[panic_handler]
@@ -135,13 +161,13 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     let hw = unsafe { HARDWARE.as_mut() }.unwrap();
 
     loop {
-        for _ in 0..0xfffff {
+        for _ in 0..0xffff {
             nop();
         }
         hw.led0.off();
         hw.led1.off();
 
-        for _ in 0..0xfffff {
+        for _ in 0..0xffff {
             nop();
         }
         hw.led0.on();

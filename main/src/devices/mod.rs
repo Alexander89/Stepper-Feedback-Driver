@@ -81,7 +81,7 @@ impl Devices {
     }
 
     fn handle_input(&mut self, buf: &[u8; 100], size: usize) {
-        self.stepper_disable();
+        // self.stepper_disable();
     }
 
     pub fn handle_eic(&mut self) {
@@ -93,6 +93,12 @@ impl Devices {
         self.dir.poll();
         self.enable.poll();
         self.step.poll();
+    }
+
+    pub fn execute_ext_int_pins(&mut self) {
+        self.dir.execute();
+        self.enable.execute();
+        self.step.execute();
     }
 
     pub fn poll_magnet_sensor(&mut self) {
@@ -108,25 +114,6 @@ impl Devices {
 
     pub fn delay_us(&mut self, time: Microseconds) {
         self.delay.delay_us(time.0);
-    }
-
-    pub fn stepper_step(&mut self) {
-        self.stepper.do_step();
-    }
-    pub fn stepper_enable(&mut self) {
-        self.stepper.enable();
-    }
-    pub fn stepper_disable(&mut self) {
-        self.stepper.disable();
-    }
-    pub fn stepper_cw(&mut self) {
-        self.stepper.cw();
-    }
-    pub fn stepper_ccw(&mut self) {
-        self.stepper.ccw();
-    }
-    pub fn poll_stepper(&mut self) {
-        self.stepper.poll();
     }
 
     pub fn i2c_read_some(
@@ -152,6 +139,30 @@ impl Devices {
         self.serial.serial_write_len(bytes, len);
         self.delay_us((15 * (len as u32)).us());
         self.poll_serial();
+    }
+}
+
+impl Devices {
+    pub fn init_stepper(&mut self, start_value: i32) {
+        self.stepper.init_stepper(start_value)
+    }
+    pub fn stepper_step(&mut self) {
+        self.stepper.do_step();
+    }
+    pub fn stepper_enable(&mut self) {
+        self.stepper.enable();
+    }
+    pub fn stepper_disable(&mut self) {
+        self.stepper.disable();
+    }
+    pub fn stepper_cw(&mut self) {
+        self.stepper.cw();
+    }
+    pub fn stepper_ccw(&mut self) {
+        self.stepper.ccw();
+    }
+    pub fn poll_stepper(&mut self) {
+        self.stepper.poll();
     }
 }
 
@@ -209,22 +220,8 @@ impl Devices {
         let step = ExtIntPin::<PA05>::enable(pins.a9, super::step_changed);
         let dir = ExtIntPin::<PB09>::enable(pins.a7, super::dir_changed);
 
-        // let generator = {
-        //     clocks.get_gclk(ClockGenId::GCLK2).unwrap_or_else(|| {
-        //         clocks
-        //             .configure_gclk_divider_and_source(
-        //                 ClockGenId::GCLK2,
-        //                 1,
-        //                 pac::gclk::genctrl::SRC_A::OSC32K,
-        //                 false,
-        //             )
-        //             .unwrap()
-        //     })
-        // };
-
-        // // configure a clock for the TC4 and TC5 peripherals
-        // let tc23_clock_gen = &clocks.tcc2_tc3(&generator).unwrap();
-        // // instantiate a timer object for the TC4 peripheral
+        // configure a clock for the TC4 and TC5 peripherals
+        // instantiate a timer object for the TC4 peripheral
         // let mut timer3 = TimerCounter::tc3_(tc23_clock_gen, peripherals.TC3, &mut peripherals.PM);
         // // start a 5Hz timer
         // timer3.start(50.hz());
