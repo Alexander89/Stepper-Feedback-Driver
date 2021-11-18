@@ -210,7 +210,7 @@ impl Devices {
 
         let delay = Delay::new(core.SYST, &mut clocks);
 
-        ExtIntPin::init(
+        let generator = ext_int_pin::init(
             &mut clocks,
             &mut core.NVIC,
             &mut peripherals.PM,

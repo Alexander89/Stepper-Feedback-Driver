@@ -4,6 +4,7 @@ use core::{cell::RefCell, sync::atomic::Ordering};
 
 use cortex_m::interrupt::{CriticalSection, Mutex};
 use embedded_hal::digital::v2::PinState;
+use hal::clock::GClock;
 use hal::{
     clock::{ClockGenId, GenericClockController},
     eic::{
@@ -34,48 +35,50 @@ pub struct ExtIntPin<I: PinId> {
     state: bool,
     cb: fn(bool) -> (),
 }
-impl ExtIntPin<PA01> {
-    pub fn init(
-        clocks: &mut GenericClockController,
-        nvic: &mut NVIC,
-        pm: &mut pac::PM,
-        eic: pac::EIC,
-    ) {
-        // not supported by chip
-        // let is_configured = EIC_SETUP.swap(true, core::sync::atomic::Ordering::SeqCst);
+pub fn init(
+    clocks: &mut GenericClockController,
+    nvic: &mut NVIC,
+    pm: &mut pac::PM,
+    eic: pac::EIC,
+) -> GClock {
+    // not supported by chip
+    // let is_configured = EIC_SETUP.swap(true, core::sync::atomic::Ordering::SeqCst);
 
-        // wrapping it at lest in a critical section.
-        let is_configured = cortex_m::interrupt::free(|_| {
-            let is_configured = EIC_SETUP.load(Ordering::SeqCst);
-            EIC_SETUP.store(true, Ordering::SeqCst);
-            is_configured
+    // wrapping it at lest in a critical section.
+    let is_configured = cortex_m::interrupt::free(|_| {
+        let is_configured = EIC_SETUP.load(Ordering::SeqCst);
+        EIC_SETUP.store(true, Ordering::SeqCst);
+        is_configured
+    });
+
+    if !is_configured {
+        // define clock generator 2 and connect it to the 8Mhz OSC
+        let gclk2 = clocks
+            .configure_gclk_divider_and_source(
+                ClockGenId::GCLK2,
+                1,
+                pac::gclk::genctrl::SRC_A::OSC8M,
+                false,
+            )
+            .unwrap();
+
+        // "connect" eic clock to gclk2
+        let eic_clock = clocks.eic(&gclk2).unwrap();
+
+        // init External interrupt controller
+        let mut eic = EIC::init(pm, eic_clock, eic);
+        cortex_m::interrupt::free(|cs| {
+            EIC.borrow(cs).replace(Some(eic));
         });
 
-        if !is_configured {
-            // define clock generator 2 and connect it to the 8Mhz OSC
-            let gclk2 = clocks
-                .configure_gclk_divider_and_source(
-                    ClockGenId::GCLK2,
-                    1,
-                    pac::gclk::genctrl::SRC_A::OSC8M,
-                    false,
-                )
-                .unwrap();
-
-            // "connect" eic clock to gclk2
-            let eic_clock = clocks.eic(&gclk2).unwrap();
-
-            // init External interrupt controller
-            let mut eic = EIC::init(pm, eic_clock, eic);
-            cortex_m::interrupt::free(|cs| {
-                EIC.borrow(cs).replace(Some(eic));
-            });
-
-            unsafe {
-                nvic.set_priority(interrupt::EIC, 1);
-                NVIC::unmask(interrupt::EIC);
-            }
+        unsafe {
+            nvic.set_priority(interrupt::EIC, 1);
+            NVIC::unmask(interrupt::EIC);
         }
+
+        gclk2
+    } else {
+        clocks.get_gclk(ClockGenId::GCLK2).unwrap()
     }
 }
 
@@ -88,207 +91,65 @@ fn get_pin_state(in0: bool, shift: u8) -> bool {
     }
 }
 
-impl ExtIntPin<pin_v2::PA05> {
-    pub fn enable<M: PinMode>(pin: Pin<pin_v2::PA05, M>, cb: fn(bool) -> ()) -> Self {
-        let mut extint = extInt::ExtInt5::new(pin.into_pull_down_interrupt());
-        // configure ExtInt
-        cortex_m::interrupt::free(|cs| {
-            EIC.borrow(cs).borrow_mut().as_mut().map(|e| {
-                extint.sense(e, Sense::BOTH);
-                extint.filter(e, true);
-                extint.enable_interrupt(e);
+use paste;
+
+macro_rules! eip {
+    (
+        $Pad:ident, 
+        $num:expr,
+        $is_in0:expr
+     ) => {
+paste::item! {
+    impl ExtIntPin<pin_v2::$Pad> {
+        pub fn enable<M: PinMode>(pin: Pin<pin_v2::$Pad, M>, cb: fn(bool) -> ()) -> Self {
+            let mut extint = extInt::[<ExtInt $num>]::new(pin.into_pull_down_interrupt());
+            // configure ExtInt
+            cortex_m::interrupt::free(|cs| {
+                EIC.borrow(cs).borrow_mut().as_mut().map(|e| {
+                    extint.sense(e, Sense::BOTH);
+                    extint.filter(e, true);
+                    extint.enable_interrupt(e);
+                });
             });
-        });
 
-        let ext_id = 5;
-        let state = get_pin_state(true, ext_id);
-        Self {
-            _p: PhantomData::default(),
-            ext_id,
-            state,
-            cb,
+            let ext_id = $num;
+            let state = get_pin_state($is_in0, ext_id);
+            Self {
+                _p: PhantomData::default(),
+                ext_id,
+                state,
+                cb,
+            }
         }
-    }
 
-    pub fn poll(&mut self) {
-        cortex_m::interrupt::free(|cs| {
+        pub fn poll(&mut self) {
+            cortex_m::interrupt::free(|cs| {
+                let eic = unsafe { &*pac::EIC::ptr() };
+                if self.is_triggered(eic) {
+                    self.execute();
+                    self.clear_flag(eic)
+                }
+            });
+        }
+
+        pub fn execute(&mut self) {
             self.state = get_pin_state(true, self.ext_id);
-            let eic = unsafe { &*pac::EIC::ptr() };
-            if self.is_triggered(eic) {
-                (self.cb)(self.state);
-                self.clear_flag(eic)
-            }
-        });
-    }
-    pub fn is_triggered(&self, eic: &RegisterBlock) -> bool {
-        eic.intflag.read().extint5().bit_is_set()
-    }
-    pub fn clear_flag(&self, eic: &RegisterBlock) {
-        eic.intflag.modify(|_, w| w.extint5().set_bit());
-    }
-}
+            (self.cb)(self.state);
+        }
 
-impl ExtIntPin<pin_v2::PA06> {
-    pub fn enable<M: PinMode>(pin: Pin<pin_v2::PA06, M>, cb: fn(bool) -> ()) -> Self {
-        let mut extint = extInt::ExtInt6::new(pin.into_pull_down_interrupt());
-        // configure ExtInt
-        cortex_m::interrupt::free(|cs| {
-            EIC.borrow(cs).borrow_mut().as_mut().map(|e| {
-                extint.sense(e, Sense::BOTH);
-                extint.filter(e, true);
-                extint.enable_interrupt(e);
-            });
-        });
-
-        let ext_id = 6;
-        let state = get_pin_state(true, ext_id);
-
-        Self {
-            _p: PhantomData::default(),
-            ext_id,
-            state,
-            cb,
+        fn is_triggered(&self, eic: &RegisterBlock) -> bool {
+            eic.intflag.read().[<extint $num>]().bit_is_set()
+        }
+        fn clear_flag(&self, eic: &RegisterBlock) {
+            eic.intflag.modify(|_, w| w.[<extint $num>]().set_bit());
         }
     }
-
-    pub fn poll(&mut self) {
-        cortex_m::interrupt::free(|cs| {
-            self.state = get_pin_state(true, self.ext_id);
-            let eic = unsafe { &*pac::EIC::ptr() };
-            if self.is_triggered(eic) {
-                (self.cb)(self.state);
-                self.clear_flag(eic)
-            }
-        });
-    }
-    pub fn is_triggered(&self, eic: &RegisterBlock) -> bool {
-        eic.intflag.read().extint6().bit_is_set()
-    }
-    pub fn clear_flag(&self, eic: &RegisterBlock) {
-        eic.intflag.modify(|_, w| w.extint6().set_bit());
-    }
+}
+}
 }
 
-impl ExtIntPin<pin_v2::PA07> {
-    pub fn enable<M: PinMode>(pin: Pin<pin_v2::PA07, M>, cb: fn(bool) -> ()) -> Self {
-        let mut extint = extInt::ExtInt7::new(pin.into_pull_down_interrupt());
-        // configure ExtInt
-        cortex_m::interrupt::free(|cs| {
-            EIC.borrow(cs).borrow_mut().as_mut().map(|e| {
-                extint.sense(e, Sense::BOTH);
-                extint.filter(e, true);
-                extint.enable_interrupt(e);
-            });
-        });
-
-        let ext_id = 7;
-        let state = get_pin_state(true, ext_id);
-
-        Self {
-            _p: PhantomData::default(),
-            ext_id,
-            state,
-            cb,
-        }
-    }
-
-    pub fn poll(&mut self) {
-        cortex_m::interrupt::free(|cs| {
-            self.state = get_pin_state(false, self.ext_id);
-            let eic = unsafe { &*pac::EIC::ptr() };
-            if self.is_triggered(eic) {
-                (self.cb)(self.state);
-
-                self.clear_flag(eic)
-            }
-        });
-    }
-    pub fn is_triggered(&self, eic: &RegisterBlock) -> bool {
-        eic.intflag.read().extint7().bit_is_set()
-    }
-    pub fn clear_flag(&self, eic: &RegisterBlock) {
-        eic.intflag.modify(|_, w| w.extint7().set_bit());
-    }
-}
-
-impl ExtIntPin<pin_v2::PA09> {
-    pub fn enable<M: PinMode>(pin: Pin<pin_v2::PA09, M>, cb: fn(bool) -> ()) -> Self {
-        let mut extint = extInt::ExtInt9::new(pin.into_pull_down_interrupt());
-        // configure ExtInt
-        cortex_m::interrupt::free(|cs| {
-            EIC.borrow(cs).borrow_mut().as_mut().map(|e| {
-                extint.sense(e, Sense::BOTH);
-                extint.filter(e, true);
-                extint.enable_interrupt(e);
-            });
-        });
-
-        let ext_id = 9;
-        let state = get_pin_state(true, ext_id);
-
-        Self {
-            _p: PhantomData::default(),
-            ext_id,
-            state,
-            cb,
-        }
-    }
-
-    pub fn poll(&mut self) {
-        cortex_m::interrupt::free(|cs| {
-            self.state = get_pin_state(false, self.ext_id);
-            let eic = unsafe { &*pac::EIC::ptr() };
-            if self.is_triggered(eic) {
-                (self.cb)(self.state);
-                self.clear_flag(eic)
-            }
-        });
-    }
-    pub fn is_triggered(&self, eic: &RegisterBlock) -> bool {
-        eic.intflag.read().extint9().bit_is_set()
-    }
-    pub fn clear_flag(&self, eic: &RegisterBlock) {
-        eic.intflag.modify(|_, w| w.extint9().set_bit());
-    }
-}
-
-impl ExtIntPin<pin_v2::PB09> {
-    pub fn enable<M: PinMode>(pin: Pin<pin_v2::PB09, M>, cb: fn(bool) -> ()) -> Self {
-        let mut extint = extInt::ExtInt9::new(pin.into_pull_down_interrupt());
-        // configure ExtInt
-        cortex_m::interrupt::free(|cs| {
-            EIC.borrow(cs).borrow_mut().as_mut().map(|e| {
-                extint.sense(e, Sense::BOTH);
-                extint.filter(e, true);
-                extint.enable_interrupt(e);
-            });
-        });
-
-        let ext_id = 9;
-        let state = get_pin_state(false, ext_id);
-        Self {
-            _p: PhantomData::default(),
-            ext_id,
-            state,
-            cb,
-        }
-    }
-
-    pub fn poll(&mut self) {
-        cortex_m::interrupt::free(|cs| {
-            self.state = get_pin_state(false, self.ext_id);
-            let eic = unsafe { &*pac::EIC::ptr() };
-            if self.is_triggered(eic) {
-                self.state != self.state;
-                (self.cb)(self.state);
-                self.clear_flag(eic)
-            }
-        });
-    }
-    pub fn is_triggered(&self, eic: &RegisterBlock) -> bool {
-        eic.intflag.read().extint9().bit_is_set()
-    }
-    pub fn clear_flag(&self, eic: &RegisterBlock) {
-        eic.intflag.modify(|_, w| w.extint9().set_bit());
-    }
-}
+eip!(PA05, 5, true);
+eip!(PA06, 6, true);
+eip!(PA07, 7, true);
+eip!(PA09, 9, true);
+eip!(PB09, 9, false);

@@ -307,6 +307,7 @@ dependencies = [
  "cortex-m 0.7.3",
  "cortex-m-rt",
  "embedded-hal",
+ "paste",
  "usb-device",
  "usbd-serial",
  "utils",
