@@ -4,7 +4,7 @@ use super::i2c::I2c;
 
 pub struct MagnetSensor {
     status: u8,
-    detected: bool,
+    pub detected: bool,
     low: bool,
     heigh: bool,
     pub raw_angle: u16,
@@ -53,30 +53,3 @@ impl MagnetSensor {
         Ok(())
     }
 }
-
-// if detected {
-
-//     serial_write(b"a: ");
-//     delay.delay_ms(2u16);
-//     serial_write_num(angle);
-//     delay.delay_ms(2u16);
-
-//     serial_write(b" agc: ");
-//     delay.delay_ms(2u16);
-//     serial_write_num(agc);
-//     delay.delay_ms(2u16);
-
-//     serial_write(b" mag: ");
-//     delay.delay_ms(2u16);
-//     serial_write_num(magnitude);
-//     delay.delay_ms(2u16);
-
-//     // serial_write(b" a: ");
-//     // delay.delay_ms(2u16);
-//     // let (len, bytes) = num_to_string(angle);
-//     // serial_write_len(&bytes, len);
-//     // delay.delay_ms(2u16);
-
-//     serial_write(b"\r\n");
-//     delay.delay_ms(2u16);
-// }

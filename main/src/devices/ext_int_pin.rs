@@ -1,6 +1,7 @@
 use core::marker::PhantomData;
 use core::sync::atomic::AtomicBool;
 use core::{cell::RefCell, sync::atomic::Ordering};
+use core::borrow::BorrowMut;
 
 use cortex_m::interrupt::{CriticalSection, Mutex};
 use embedded_hal::digital::v2::PinState;
@@ -36,11 +37,12 @@ pub struct ExtIntPin<I: PinId> {
     cb: fn(bool) -> (),
 }
 pub fn init(
+    cs: &CriticalSection,
     clocks: &mut GenericClockController,
     nvic: &mut NVIC,
     pm: &mut pac::PM,
     eic: pac::EIC,
-) -> GClock {
+) {
     // not supported by chip
     // let is_configured = EIC_SETUP.swap(true, core::sync::atomic::Ordering::SeqCst);
 
@@ -66,19 +68,12 @@ pub fn init(
         let eic_clock = clocks.eic(&gclk2).unwrap();
 
         // init External interrupt controller
-        let mut eic = EIC::init(pm, eic_clock, eic);
-        cortex_m::interrupt::free(|cs| {
-            EIC.borrow(cs).replace(Some(eic));
-        });
+        EIC.borrow(cs).replace(Some(EIC::init(pm, eic_clock, eic)));
 
         unsafe {
             nvic.set_priority(interrupt::EIC, 1);
             NVIC::unmask(interrupt::EIC);
         }
-
-        gclk2
-    } else {
-        clocks.get_gclk(ClockGenId::GCLK2).unwrap()
     }
 }
 
@@ -91,7 +86,6 @@ fn get_pin_state(in0: bool, shift: u8) -> bool {
     }
 }
 
-use paste;
 
 macro_rules! eip {
     (
@@ -133,7 +127,7 @@ paste::item! {
         }
 
         pub fn execute(&mut self) {
-            self.state = get_pin_state(true, self.ext_id);
+            self.state = get_pin_state($is_in0, self.ext_id);
             (self.cb)(self.state);
         }
 

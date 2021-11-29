@@ -1,23 +1,32 @@
-use atsamd_hal::{gpio::{Output, PinId, v2::{Pin, PushPullOutput}}, prelude::*};
+use atsamd_hal::{
+    gpio::{
+        v2::{Pin, PushPullOutput},
+        Output, PinId,
+    },
+    prelude::*,
+};
 use embedded_hal::digital::v2::PinState;
 
 pub struct Led<P: PinId> {
     pin: Pin<P, PushPullOutput>,
-    state: PinState
+    state: PinState,
 }
 
 impl<P: PinId> Led<P> {
     pub fn init(pin: Pin<P, PushPullOutput>) -> Self {
-        Self { pin, state: PinState::Low }
+        Self {
+            pin,
+            state: PinState::Low,
+        }
     }
 
     pub fn on(&mut self) {
-        self.pin.set_high();
-        self.state = PinState::High;
-    }
-    pub fn off(&mut self) {
         self.pin.set_low();
         self.state = PinState::Low;
+    }
+    pub fn off(&mut self) {
+        self.pin.set_high();
+        self.state = PinState::High;
     }
     pub fn toggle(&mut self) {
         self.state = !self.state;

@@ -40,12 +40,12 @@ impl UsbSerial {
     }
 
     #[allow(dead_code)]
-    pub fn serial_write(&mut self, bytes: &[u8]) -> () {
+    pub fn serial_write(&mut self, bytes: &[u8]) {
         self.serial_write_len(&bytes, bytes.len())
     }
 
     #[allow(dead_code)]
-    pub fn serial_write_num(&mut self, num: usize) -> () {
+    pub fn serial_write_num(&mut self, num: usize) {
         let (len, bytes) = utils::num_to_string(num);
         self.serial_write_len(&bytes, len)
     }

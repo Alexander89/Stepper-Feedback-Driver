@@ -15,9 +15,11 @@ usb-device = "0.2.8"
 usbd-serial = "0.1.1"
 utils =  { path = "../utils" }
 paste = "1.0"
+void = { version="1.0.2",  default-features=false }
 
 [features]
 default = ["atsamd-hal/samd21g", "atsamd-hal/samd21g-rt"]
+serial = []
 
 
 [profile.release]

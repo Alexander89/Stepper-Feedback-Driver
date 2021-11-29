@@ -1,5 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
+pub mod time;
+
 pub fn num_length(n: usize) -> usize {
     if n > 9 {
         num_length(n / 10) + 1
@@ -18,7 +20,7 @@ pub fn num_to_string(num: usize) -> (usize, [u8; 10]) {
         value /= 10;
 
         let idx = (lng - i) as usize - 1;
-        buf[idx] = '0' as u8 + dig as u8;
+        buf[idx] = b'0' + dig as u8;
     }
     (lng, buf)
 }

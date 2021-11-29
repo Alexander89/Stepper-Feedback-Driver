@@ -311,6 +311,7 @@ dependencies = [
  "usb-device",
  "usbd-serial",
  "utils",
+ "void",
  "xiao_m0",
 ]
 
@@ -357,6 +358,9 @@ dependencies = [
 [[package]]
 name = "utils"
 version = "0.1.0"
+dependencies = [
+ "atsamd-hal",
+]
 
 [[package]]
 name = "vcell"
