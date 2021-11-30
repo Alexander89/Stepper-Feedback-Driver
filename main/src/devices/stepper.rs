@@ -5,9 +5,14 @@ use atsamd_hal::{
 };
 use embedded_hal::digital::v2::PinState;
 
-pub enum StepPollResult {
+pub enum Direction {
+    CW,
+    CCW,
+}
+
+pub enum NextStepperAction {
     Idle,
-    DirectionChanged,
+    DirectionChanged(Direction),
     StepRequired(i8),
 }
 pub struct Stepper {
@@ -72,49 +77,51 @@ impl Stepper {
         self.last_mag_val = start_value;
     }
 
-    pub fn poll(&mut self) -> StepPollResult {
-        // adjust to sensor readings
-        if self.real_step < self.current_step - 1 {
-            self.current_step -= 1;
-        } else if self.real_step > self.current_step + 1 {
-            self.current_step += 1;
-        }
-
+    pub fn poll_next_action(&mut self) -> NextStepperAction {
         if self.current_step == self.target_step {
             // nop / rest
-            StepPollResult::Idle
+            NextStepperAction::Idle
         } else if self.current_step > self.target_step && self.current_direction_cw {
-            // change dir
-            self.direction.set_low();
-            self.current_direction_cw = false;
-
-            StepPollResult::DirectionChanged
+            // change dir to CCW
+            NextStepperAction::DirectionChanged(Direction::CCW)
         } else if self.current_step < self.target_step && !self.current_direction_cw {
-            // change dir
-            self.direction.set_high();
-            self.current_direction_cw = true;
-
-            StepPollResult::DirectionChanged
+            // change dir to CW
+            NextStepperAction::DirectionChanged(Direction::CW)
         } else {
             // do step now
             if self.current_direction_cw {
-                StepPollResult::StepRequired(1)
+                NextStepperAction::StepRequired(1)
             } else {
-                StepPollResult::StepRequired(-1)
+                NextStepperAction::StepRequired(-1)
             }
         }
     }
 
-    pub fn execute(&mut self, req: StepPollResult) -> bool {
+    pub fn execute(&mut self, req: NextStepperAction) -> bool {
         match req {
-            StepPollResult::Idle => true,
-            StepPollResult::DirectionChanged => true,
-            StepPollResult::StepRequired(i) => {
+            NextStepperAction::Idle => false,
+            NextStepperAction::DirectionChanged(Direction::CW) => {
+                self.direction.set_high();
+                self.current_direction_cw = true;
+                true
+            }
+            NextStepperAction::DirectionChanged(Direction::CCW) => {
+                self.direction.set_low();
+                self.current_direction_cw = false;
+                true
+            }
+            NextStepperAction::StepRequired(i) => {
                 // do step now
                 self.current_step += i as i32;
 
                 self.state = !self.state;
-                self.step.set_state(self.state);
+                self.step.set_high();
+                cortex_m::asm::nop();
+                cortex_m::asm::nop();
+                cortex_m::asm::nop();
+                cortex_m::asm::nop();
+                cortex_m::asm::nop();
+                self.step.set_low();
 
                 // HACK do a better stuck protection
                 (self.current_step - self.real_step).abs() < 3
@@ -140,6 +147,14 @@ impl Stepper {
 
         // fix real step value
         self.real_step -= dif;
+
+        // TODO fix reading - adjust to sensor readings
+        if self.real_step < self.current_step - 1 {
+            self.current_step -= (self.current_step - self.real_step) / 2;
+        } else if self.real_step > self.current_step + 1 {
+            self.current_step += (self.real_step - self.current_step) / 2;
+        }
+
         self.last_mag_val = mag_val;
     }
 }

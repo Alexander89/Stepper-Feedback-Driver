@@ -34,7 +34,7 @@ use xiao_m0::hal::{
 
 use ext_int_pin::ExtIntPin;
 use i2c::I2c;
-pub use stepper::StepPollResult;
+pub use stepper::NextStepperAction;
 use stepper::Stepper;
 use usb_serial::UsbSerial;
 
@@ -85,6 +85,8 @@ impl Devices {
             self.rtc_ovl = false;
             // hmmmmmm
             self.timer_1_buffer = 1_000_000;
+            self.timer_0_buffer = 0;
+            self.rtc.set_count32(0);
             1_000_000.us()
         } else {
             // no swap possible
@@ -104,6 +106,8 @@ impl Devices {
             self.rtc_ovl = false;
             // hmmmmmm
             self.timer_0_buffer = 1_000_000;
+            self.timer_1_buffer = 0;
+            self.rtc.set_count32(0);
             1_000_000.us()
         } else {
             // no swap possible
@@ -139,8 +143,8 @@ impl Devices {
     }
 
     pub fn handle_eic(&mut self) {
-        let eic = unsafe { &*pac::EIC::ptr() };
-        while eic.status.read().syncbusy().bit_is_set() {}
+        // let eic = unsafe { &*pac::EIC::ptr() };
+        // while eic.status.read().syncbusy().bit_is_set() {}
 
         self.dir.poll();
         self.enable.poll();
@@ -160,6 +164,14 @@ impl Devices {
         self.magnet_sensor.read(&mut self.i2c);
         if self.magnet_sensor.detected {
             self.stepper.update_angle(self.get_step());
+        }
+    }
+
+    pub fn stepwise_read(&mut self) {
+        if let Ok(true) = self.magnet_sensor.stepwise_read(&mut self.i2c) {
+            if self.magnet_sensor.detected {
+                self.stepper.update_angle(self.get_step());
+            }
         }
     }
 
@@ -253,10 +265,10 @@ impl Devices {
     pub fn stepper_ccw(&mut self) {
         self.stepper.ccw();
     }
-    pub fn poll_stepper(&mut self) -> stepper::StepPollResult {
-        self.stepper.poll()
+    pub fn poll_stepper(&mut self) -> stepper::NextStepperAction {
+        self.stepper.poll_next_action()
     }
-    pub fn execute_stepper(&mut self, req: stepper::StepPollResult) -> bool {
+    pub fn execute_stepper(&mut self, req: stepper::NextStepperAction) -> bool {
         self.stepper.execute(req)
     }
 }
@@ -304,8 +316,6 @@ impl Devices {
         );
 
         let magnet_sensor = MagnetSensor::init();
-
-        blink(1, &mut led0, &mut led1, &mut led2, &mut delay);
 
         ext_int_pin::init(
             &cs,

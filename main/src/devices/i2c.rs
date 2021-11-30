@@ -70,4 +70,9 @@ impl I2c {
         }
         Ok(())
     }
+    pub fn i2c_read_one(&mut self, address: u8) -> Result<u8, I2CError> {
+        let mut res = [0u8];
+        interrupt::free(|_| self.main.read(address, &mut res))?;
+        Ok(res[0])
+    }
 }

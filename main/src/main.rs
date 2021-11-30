@@ -28,11 +28,12 @@ fn run() -> ! {
     hardware.stepper_enable();
     hardware.delay_us(100_000.us());
 
-    let execute_stepper_time_consumptions_us = 190.us(); // measured in debugger :-(
+    //let execute_stepper_time_consumptions_us = 190.us(); // measured in debugger :-(
+    let execute_stepper_time_consumptions_us = 50.us(); // measured in debugger :-(
 
     // in us
     let dt_min: f32 = 1_000_000.0 / 200.0; // 200 steps per sec
-    let dt_max: f32 = 1_000_000.0 / 950.0; // 950 steps per sec
+    let dt_max: f32 = 1_000_000.0 / 1250.0; // 950 steps per sec
 
     let slope_delta_t: f32 = 1_500_000f32; // us to ramp up  (1 sec)
     let slope: f32 = (dt_max - dt_min) as f32 / slope_delta_t;
@@ -40,37 +41,30 @@ fn run() -> ! {
     let f = |t: f32| slope * t + dt_min;
     let g = |dt: f32| (dt - dt_min) / slope;
     let h = |dt: f32| g(dt) + dt;
-    let calc_dt_min = |dt: f32| f(h(dt.max(dt_min).min(dt_max))).min(dt_max);
+    let calc_dt_min = |dt: f32| f(h(dt.min(dt_min).max(dt_max))).max(dt_max);
 
     let mut sensor_poll_delay = 0.us();
-    let sensor_query_timeout = 15_000.us();
-    let sensor_read_timeout = 16_500.us();
+    let sensor_poll_timeout = 1_000.us();
 
     let mut last_dt = 0.us(); // us / steps
-    let mut magnet_sensor_query_first = true;
 
     loop {
         sensor_poll_delay += hardware.get_delta_us_1();
         // poll I²C - magnet sensor.
-        if magnet_sensor_query_first {
-            if sensor_poll_delay >= sensor_query_timeout {
-                // split magnet sensor write and read into two functions for two cycle runs
-                hardware.query_magnet_sensor();
-                magnet_sensor_query_first = false;
-            }
-        } else if sensor_poll_delay >= sensor_read_timeout {
-            hardware.read_magnet_sensor_result();
-            magnet_sensor_query_first = true;
+        if sensor_poll_delay >= sensor_poll_timeout {
+            // split magnet sensor write and read into two functions for two cycle runs
+            hardware.stepwise_read();
             sensor_poll_delay = 0.us();
         }
 
         // poll motor for next step?
         match hardware.poll_stepper() {
             // nothing to do, just poll again and again and again
-            devices::StepPollResult::Idle => {}
+            devices::NextStepperAction::Idle => {}
 
             // hardware requires a little delay after changing the direction
-            devices::StepPollResult::DirectionChanged => {
+            req @ devices::NextStepperAction::DirectionChanged(_) => {
+                hardware.execute_stepper(req);
                 // @WARNING - Program waits here // no polling in this time
                 hardware.delay_us(150.us());
 
@@ -78,9 +72,8 @@ fn run() -> ! {
                 // 0xFFFF_FFFF ~~~ 1/0  // (1/V)
                 last_dt = 100_000.us();
             }
-
             // if a step is required, check if we have to wait before we can do it
-            req @ devices::StepPollResult::StepRequired(_) => {
+            req @ devices::NextStepperAction::StepRequired(_) => {
                 // get delta-time to the last step.
                 let dt = hardware.peek_delta_us_0();
 
@@ -96,15 +89,18 @@ fn run() -> ! {
                     let next_dt_min = (calc_dt_min(last_dt.0 as f32) as u32).us();
 
                     if dt + execute_stepper_time_consumptions_us < next_dt_min {
-                        let delta_t_last_step = dt + hardware.get_delta_us_0();
+                        let delta_t_last_step = hardware.peek_delta_us_0();
 
                         if next_dt_min > delta_t_last_step {
                             let open_delay = next_dt_min - delta_t_last_step;
 
+                            // HACK jump out to the beginning of the loop is not really nice here
+                            if open_delay > 1200.us() {
+                                continue;
+                            }
                             // @WARNING - Program waits here
                             hardware.delay_us(open_delay);
                         }
-
                         hardware.execute_stepper(req);
 
                         // set last speed to calculated v_max value to avoid inaccuracy in calculation
@@ -268,7 +264,6 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     use cortex_m::asm::nop;
     unsafe {
         let hw = HARDWARE.as_mut().unwrap();
-        let file = _info.location().unwrap().file().as_bytes();
 
         loop {
             for _ in 0..0xffff {
