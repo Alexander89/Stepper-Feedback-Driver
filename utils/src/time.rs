@@ -1,7 +1,7 @@
 //! Time units
 
 use atsamd_hal::time as ats_time;
-use core::ops::{Add, Sub};
+use core::ops::{Add, AddAssign, Sub};
 
 // Frequency based
 
@@ -281,6 +281,15 @@ where
     type Output = Nanoseconds;
     fn add(self, item: T) -> Self::Output {
         Nanoseconds(self.0 + item.into().0)
+    }
+}
+
+impl<T> AddAssign<T> for Microseconds
+where
+    T: Into<Microseconds>,
+{
+    fn add_assign(&mut self, rhs: T) {
+        self.0 += rhs.into().0;
     }
 }
 

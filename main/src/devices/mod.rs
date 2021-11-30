@@ -64,6 +64,9 @@ pub struct Devices {
     dir: ExtIntPin<PB09>,    // pin 7
     step: ExtIntPin<PA05>,   // pin 9
     enable: ExtIntPin<PA06>, // pin 10
+
+    timer_0_buffer: u32,
+    timer_1_buffer: u32,
 }
 
 impl Devices {
@@ -77,23 +80,56 @@ impl Devices {
     }
 
     #[inline]
-    pub fn get_delta_us(&mut self) -> Microseconds {
+    pub fn get_delta_us_0(&mut self) -> Microseconds {
         if self.rtc_ovl {
             self.rtc_ovl = false;
-            u32::MAX.us()
+            // hmmmmmm
+            self.timer_1_buffer = 1_000_000;
+            1_000_000.us()
         } else {
             // no swap possible
-            let v = self.rtc.count32().us();
+            let v = self.rtc.count32();
             self.rtc.set_count32(0);
-            v
+
+            self.timer_1_buffer += v;
+            let l = self.timer_0_buffer + v;
+            self.timer_0_buffer = 0;
+            l.us()
+        }
+    }
+
+    #[inline]
+    pub fn get_delta_us_1(&mut self) -> Microseconds {
+        if self.rtc_ovl {
+            self.rtc_ovl = false;
+            // hmmmmmm
+            self.timer_0_buffer = 1_000_000;
+            1_000_000.us()
+        } else {
+            // no swap possible
+            let v = self.rtc.count32();
+            self.rtc.set_count32(0);
+
+            self.timer_0_buffer += v;
+            let l = self.timer_1_buffer + v;
+            self.timer_1_buffer = 0;
+            l.us()
         }
     }
     #[inline]
-    pub fn peek_delta_us(&mut self) -> Microseconds {
+    pub fn peek_delta_us_0(&mut self) -> Microseconds {
         if self.rtc_ovl {
-            u32::MAX.us()
+            1_000_000.us()
         } else {
-            self.rtc.count32().us()
+            (self.timer_0_buffer + self.rtc.count32()).us()
+        }
+    }
+    #[inline]
+    pub fn peek_delta_us_1(&mut self) -> Microseconds {
+        if self.rtc_ovl {
+            1_000_000.us()
+        } else {
+            (self.timer_1_buffer + self.rtc.count32()).us()
         }
     }
 
@@ -116,12 +152,22 @@ impl Devices {
         self.step.execute();
     }
 
-    pub fn poll_magnet_sensor(&mut self) {
-        self.magnet_sensor.poll(&mut self.i2c);
+    pub fn query_magnet_sensor(&mut self) {
+        self.magnet_sensor.query(&mut self.i2c);
+    }
+
+    pub fn read_magnet_sensor_result(&mut self) {
+        self.magnet_sensor.read(&mut self.i2c);
         if self.magnet_sensor.detected {
             self.stepper.update_angle(self.get_step());
         }
     }
+
+    pub fn poll_magnet_sensor(&mut self) {
+        self.query_magnet_sensor();
+        self.read_magnet_sensor_result()
+    }
+
     pub fn poll_magnet_sensor_setup(&mut self) {
         self.magnet_sensor.poll_setup(&mut self.i2c);
     }
@@ -312,6 +358,9 @@ impl Devices {
 
             rtc,
             rtc_ovl: false,
+
+            timer_0_buffer: 0,
+            timer_1_buffer: 0,
         }
     }
 }

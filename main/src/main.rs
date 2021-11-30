@@ -25,65 +25,64 @@ fn run() -> ! {
     };
 
     init(hardware);
-
     hardware.stepper_enable();
-
-    hardware.delay_us(50_000.us());
-
-    let mut last_dt = 0.us(); // us / steps
-    let mut last_v = 0f32; // us / steps
+    hardware.delay_us(100_000.us());
 
     let execute_stepper_time_consumptions_us = 190.us(); // measured in debugger :-(
-                                                         //let slope: f32 = 0.76;
-    let slope: f32 = 100.0;
 
-    // TODO change unit from sec to µs
-    let v_min: f32 = 200.0;
-    let v_max: f32 = 950.0;
+    // in us
+    let dt_min: f32 = 1_000_000.0 / 200.0; // 200 steps per sec
+    let dt_max: f32 = 1_000_000.0 / 950.0; // 950 steps per sec
 
-    // TODO change from velocity to deltaT
-    let f = |t: f32| (slope * t + v_min).min(v_max);
-    let g = |v: f32| (v.min(v_max) - v_min) / slope;
-    let s = |v: f32| 1.0 / v;
-    let h = |v: f32| g(v) + s(v);
-    let f_v_max = |v: f32| f(h(v.max(v_min)));
+    let slope_delta_t: f32 = 1_500_000f32; // us to ramp up  (1 sec)
+    let slope: f32 = (dt_max - dt_min) as f32 / slope_delta_t;
 
-    let sensor_poll_timeout = 15_000.us();
-    let mut sensor_poll_dt = 0.us();
-    let mut last_poll = 0.us();
+    let f = |t: f32| slope * t + dt_min;
+    let g = |dt: f32| (dt - dt_min) / slope;
+    let h = |dt: f32| g(dt) + dt;
+    let calc_dt_min = |dt: f32| f(h(dt.max(dt_min).min(dt_max))).min(dt_max);
+
+    let mut sensor_poll_delay = 0.us();
+    let sensor_query_timeout = 15_000.us();
+    let sensor_read_timeout = 16_500.us();
+
+    let mut last_dt = 0.us(); // us / steps
+    let mut magnet_sensor_query_first = true;
 
     loop {
-        let dt = hardware.peek_delta_us();
-        // use sensor_poll_dt to make the delay independent of the steps independent
-        if (sensor_poll_dt + (dt - last_poll)) >= sensor_poll_timeout {
-            hardware.poll_magnet_sensor();
-            last_poll = dt;
-            sensor_poll_dt = 0.us();
+        sensor_poll_delay += hardware.get_delta_us_1();
+        // poll I²C - magnet sensor.
+        if magnet_sensor_query_first {
+            if sensor_poll_delay >= sensor_query_timeout {
+                // split magnet sensor write and read into two functions for two cycle runs
+                hardware.query_magnet_sensor();
+                magnet_sensor_query_first = false;
+            }
+        } else if sensor_poll_delay >= sensor_read_timeout {
+            hardware.read_magnet_sensor_result();
+            magnet_sensor_query_first = true;
+            sensor_poll_delay = 0.us();
         }
 
-        let _t_02 = hardware.peek_delta_us() - dt;
-
+        // poll motor for next step?
         match hardware.poll_stepper() {
             // nothing to do, just poll again and again and again
             devices::StepPollResult::Idle => {}
 
             // hardware requires a little delay after changing the direction
             devices::StepPollResult::DirectionChanged => {
-                let _t_0_01 = hardware.peek_delta_us() - dt;
-                // @WARNING - Program waits here
+                // @WARNING - Program waits here // no polling in this time
                 hardware.delay_us(150.us());
+
                 // drop the speed to 0 steps/sec, to ramp up again.
                 // 0xFFFF_FFFF ~~~ 1/0  // (1/V)
-                last_dt = 100.ms().into();
-                last_v = 0f32;
+                last_dt = 100_000.us();
             }
 
             // if a step is required, check if we have to wait before we can do it
             req @ devices::StepPollResult::StepRequired(_) => {
-                let _t_1_01 = hardware.peek_delta_us() - dt;
                 // get delta-time to the last step.
-                let dt = hardware.get_delta_us();
-                let _t_1_02 = hardware.peek_delta_us();
+                let dt = hardware.peek_delta_us_0();
 
                 // check if we are slower than the last step
                 // execute_stepper_time_consumptions_us add some µs the execute_stepper
@@ -91,24 +90,16 @@ fn run() -> ! {
                 if dt + execute_stepper_time_consumptions_us > last_dt {
                     hardware.execute_stepper(req);
                     // Get delta again to get the most accurate delta between the steps
-                    last_dt = dt + hardware.get_delta_us();
-                    last_v = 1_000_000f32 / dt.0 as f32;
+                    last_dt = hardware.get_delta_us_0();
                 } else {
-                    // v [steps / Sec]
-                    let _t_1_03 = hardware.peek_delta_us();
+                    // @todo why last_dt
+                    let next_dt_min = (calc_dt_min(last_dt.0 as f32) as u32).us();
 
-                    let v: f32 = (1_000_000f32 / dt.0 as f32).max(v_min);
-                    let _t_1_04 = hardware.peek_delta_us();
-                    let v_max = f_v_max(last_v as f32);
-                    let _t_1_05 = hardware.peek_delta_us();
+                    if dt + execute_stepper_time_consumptions_us < next_dt_min {
+                        let delta_t_last_step = dt + hardware.get_delta_us_0();
 
-                    if v > v_max {
-                        let min_delay = (((1f32 / v_max) * 1_000_000f32) as u32).us()
-                            - execute_stepper_time_consumptions_us;
-                        let delta_t_last_step = dt + hardware.get_delta_us();
-
-                        if min_delay > delta_t_last_step {
-                            let open_delay = min_delay - delta_t_last_step;
+                        if next_dt_min > delta_t_last_step {
+                            let open_delay = next_dt_min - delta_t_last_step;
 
                             // @WARNING - Program waits here
                             hardware.delay_us(open_delay);
@@ -116,22 +107,18 @@ fn run() -> ! {
 
                         hardware.execute_stepper(req);
 
-                        last_dt = delta_t_last_step + hardware.get_delta_us();
                         // set last speed to calculated v_max value to avoid inaccuracy in calculation
-                        last_v = v_max;
+                        hardware.get_delta_us_0();
+                        // HACK us calculated delta T to pretend that the result is accurate
+                        last_dt = next_dt_min;
                     } else {
                         if hardware.execute_stepper(req) {
-                            last_v = v_max;
+                            last_dt = hardware.get_delta_us_0();
                         } else {
                             last_dt = 100.ms().into();
-                            last_v = 0f32;
                         }
                     }
                 }
-
-                // add last_dt to the sensor_poll_dt to measure time independent of the steps
-                sensor_poll_dt = sensor_poll_dt + last_dt;
-                last_poll = 0.us();
             }
         }
     }

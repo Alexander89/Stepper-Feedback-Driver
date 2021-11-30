@@ -51,4 +51,23 @@ impl I2c {
         }
         Ok(())
     }
+
+    pub fn i2c_query(&mut self, address: u8, from: u8) -> Result<(), I2CError> {
+        interrupt::free(|_| self.main.write(address, &[from]))?;
+        Ok(())
+    }
+
+    pub fn i2c_read(
+        &mut self,
+        address: u8,
+        count: usize,
+        buffer: &mut [u8],
+    ) -> Result<(), I2CError> {
+        for i in 0..count {
+            let mut res = [0u8];
+            interrupt::free(|_| self.main.read(address, &mut res))?;
+            buffer[i] = res[0];
+        }
+        Ok(())
+    }
 }

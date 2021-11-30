@@ -116,7 +116,7 @@ impl Stepper {
                 self.state = !self.state;
                 self.step.set_state(self.state);
 
-                // @TODO do a better stuck protection
+                // HACK do a better stuck protection
                 (self.current_step - self.real_step).abs() < 3
             }
         }
