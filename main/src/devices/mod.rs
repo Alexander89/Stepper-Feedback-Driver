@@ -103,12 +103,8 @@ impl Devices {
     }
 
     pub fn handle_eic(&mut self) {
-        nop();
-        nop();
-        nop();
-        nop();
-        nop();
-        nop();
+        let eic = unsafe { &*pac::EIC::ptr() };
+        while eic.status.read().syncbusy().bit_is_set() {}
 
         self.dir.poll();
         self.enable.poll();
@@ -214,7 +210,7 @@ impl Devices {
     pub fn poll_stepper(&mut self) -> stepper::StepPollResult {
         self.stepper.poll()
     }
-    pub fn execute_stepper(&mut self, req: stepper::StepPollResult) {
+    pub fn execute_stepper(&mut self, req: stepper::StepPollResult) -> bool {
         self.stepper.execute(req)
     }
 }
@@ -290,8 +286,8 @@ impl Devices {
         rtc.enable_interrupt();
 
         unsafe {
-            core.NVIC.set_priority(interrupt::RTC, 2);
-            NVIC::unmask(interrupt::RTC);
+            // core.NVIC.set_priority(interrupt::RTC, 2);
+            // NVIC::unmask(interrupt::RTC);
         }
         blink(2, &mut led0, &mut led1, &mut led2, &mut delay);
 

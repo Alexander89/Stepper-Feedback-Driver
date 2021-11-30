@@ -62,9 +62,9 @@ impl Stepper {
     }
     pub fn do_step(&mut self) {
         if self.turn_cw {
-            self.target_step += 1;
+            self.target_step += 100;
         } else {
-            self.target_step -= 1;
+            self.target_step -= 100;
         }
     }
 
@@ -105,17 +105,19 @@ impl Stepper {
         }
     }
 
-    pub fn execute(&mut self, req: StepPollResult) {
+    pub fn execute(&mut self, req: StepPollResult) -> bool {
         match req {
-            StepPollResult::Idle => (),
-            StepPollResult::DirectionChanged => (),
+            StepPollResult::Idle => true,
+            StepPollResult::DirectionChanged => true,
             StepPollResult::StepRequired(i) => {
                 // do step now
-
                 self.current_step += i as i32;
 
                 self.state = !self.state;
                 self.step.set_state(self.state);
+
+                // @TODO do a better stuck protection
+                (self.current_step - self.real_step).abs() < 3
             }
         }
     }

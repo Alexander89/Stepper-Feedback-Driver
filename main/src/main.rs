@@ -28,31 +28,40 @@ fn run() -> ! {
 
     hardware.stepper_enable();
 
-    // TODO change unit from sec to µs
+    hardware.delay_us(50_000.us());
+
     let mut last_dt = 0.us(); // us / steps
     let mut last_v = 0f32; // us / steps
 
-    let execute_stepper_time_consumptions_us = 10u32.us();
-    let a: f32 = 0.76;
-    let v_min: f32 = 50.0;
-    let v_max: f32 = 550.0;
+    let execute_stepper_time_consumptions_us = 190.us(); // measured in debugger :-(
+                                                         //let slope: f32 = 0.76;
+    let slope: f32 = 100.0;
 
-    let f = |t: f32| (a * t + v_min).min(v_max);
-    let g = |v: f32| (v.min(v_max) - v_min) / a;
+    // TODO change unit from sec to µs
+    let v_min: f32 = 200.0;
+    let v_max: f32 = 950.0;
+
+    // TODO change from velocity to deltaT
+    let f = |t: f32| (slope * t + v_min).min(v_max);
+    let g = |v: f32| (v.min(v_max) - v_min) / slope;
     let s = |v: f32| 1.0 / v;
     let h = |v: f32| g(v) + s(v);
-    let f_v_max = |v: f32| f(h(v));
+    let f_v_max = |v: f32| f(h(v.max(v_min)));
 
-    let sensor_poll_timeout = 1_000.us();
+    let sensor_poll_timeout = 15_000.us();
     let mut sensor_poll_dt = 0.us();
+    let mut last_poll = 0.us();
 
     loop {
         let dt = hardware.peek_delta_us();
         // use sensor_poll_dt to make the delay independent of the steps independent
-        if (sensor_poll_dt + dt) >= sensor_poll_timeout {
+        if (sensor_poll_dt + (dt - last_poll)) >= sensor_poll_timeout {
             hardware.poll_magnet_sensor();
+            last_poll = dt;
             sensor_poll_dt = 0.us();
         }
+
+        let _t_02 = hardware.peek_delta_us() - dt;
 
         match hardware.poll_stepper() {
             // nothing to do, just poll again and again and again
@@ -60,18 +69,21 @@ fn run() -> ! {
 
             // hardware requires a little delay after changing the direction
             devices::StepPollResult::DirectionChanged => {
+                let _t_0_01 = hardware.peek_delta_us() - dt;
                 // @WARNING - Program waits here
-                hardware.delay_us(150.us().into());
+                hardware.delay_us(150.us());
                 // drop the speed to 0 steps/sec, to ramp up again.
                 // 0xFFFF_FFFF ~~~ 1/0  // (1/V)
-                last_dt = u32::MAX.us();
+                last_dt = 100.ms().into();
                 last_v = 0f32;
             }
 
             // if a step is required, check if we have to wait before we can do it
             req @ devices::StepPollResult::StepRequired(_) => {
+                let _t_1_01 = hardware.peek_delta_us() - dt;
                 // get delta-time to the last step.
                 let dt = hardware.get_delta_us();
+                let _t_1_02 = hardware.peek_delta_us();
 
                 // check if we are slower than the last step
                 // execute_stepper_time_consumptions_us add some µs the execute_stepper
@@ -80,37 +92,46 @@ fn run() -> ! {
                     hardware.execute_stepper(req);
                     // Get delta again to get the most accurate delta between the steps
                     last_dt = dt + hardware.get_delta_us();
-                    last_v = (1f32 / dt.0 as f32) * 1_000_000f32;
+                    last_v = 1_000_000f32 / dt.0 as f32;
                 } else {
                     // v [steps / Sec]
-                    let v: f32 = (1f32 / dt.0 as f32) * 1_000_000f32;
+                    let _t_1_03 = hardware.peek_delta_us();
+
+                    let v: f32 = (1_000_000f32 / dt.0 as f32).max(v_min);
+                    let _t_1_04 = hardware.peek_delta_us();
                     let v_max = f_v_max(last_v as f32);
+                    let _t_1_05 = hardware.peek_delta_us();
 
                     if v > v_max {
-                        let min_delay = (((1f32 / v_max) * 1_000_000f32) as u32).us();
-                        let delay = dt + hardware.get_delta_us();
-                        if min_delay < delay {
-                            // calc took longer than required delay
-                            // do step
-                            hardware.execute_stepper(req);
-                        } else {
-                            let open_delay = min_delay - delay;
+                        let min_delay = (((1f32 / v_max) * 1_000_000f32) as u32).us()
+                            - execute_stepper_time_consumptions_us;
+                        let delta_t_last_step = dt + hardware.get_delta_us();
+
+                        if min_delay > delta_t_last_step {
+                            let open_delay = min_delay - delta_t_last_step;
 
                             // @WARNING - Program waits here
                             hardware.delay_us(open_delay);
-                            hardware.execute_stepper(req);
                         }
-                        last_dt = delay + hardware.get_delta_us();
+
+                        hardware.execute_stepper(req);
+
+                        last_dt = delta_t_last_step + hardware.get_delta_us();
                         // set last speed to calculated v_max value to avoid inaccuracy in calculation
                         last_v = v_max;
                     } else {
-                        hardware.execute_stepper(req);
-                        last_v = v;
+                        if hardware.execute_stepper(req) {
+                            last_v = v_max;
+                        } else {
+                            last_dt = 100.ms().into();
+                            last_v = 0f32;
+                        }
                     }
                 }
 
                 // add last_dt to the sensor_poll_dt to measure time independent of the steps
                 sensor_poll_dt = sensor_poll_dt + last_dt;
+                last_poll = 0.us();
             }
         }
     }
@@ -151,16 +172,16 @@ fn init(hw: &mut Devices) {
     hw.led0.off();
 }
 
-fn debug_timer(_d_t: u32) {
-    unsafe { HARDWARE.as_mut() }.map(|hw| {
-        #[cfg(feature = "serial")]
-        {
+fn _debug_timer(_d_t: u32) {
+    #[cfg(feature = "serial")]
+    {
+        unsafe { HARDWARE.as_mut() }.map(|hw| {
             let _ = hw.serial_write_num(hw.get_step() as usize);
             // let _ = hw.serial_write(b" ");
             // let _ = hw.serial_write_num(hw.magnet_sensor.magnitude as usize);
             let _ = hw.serial_write(b"\r\n");
-        }
-    });
+        });
+    }
 }
 
 fn dir_changed(state: bool) {
@@ -260,15 +281,16 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     use cortex_m::asm::nop;
     unsafe {
         let hw = HARDWARE.as_mut().unwrap();
+        let file = _info.location().unwrap().file().as_bytes();
 
         loop {
-            for _ in 0..0xfffff {
+            for _ in 0..0xffff {
                 nop();
             }
             hw.led0.off();
             hw.led1.off();
 
-            for _ in 0..0xfffff {
+            for _ in 0..0xffff {
                 nop();
             }
             hw.led0.on();

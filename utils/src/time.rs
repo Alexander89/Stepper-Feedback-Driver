@@ -308,7 +308,12 @@ where
 {
     type Output = Microseconds;
     fn sub(self, item: T) -> Self::Output {
-        Microseconds(self.0 - item.into().0)
+        let o: Microseconds = item.into();
+        if o.0 > self.0 {
+            0.us()
+        } else {
+            Microseconds(self.0 - o.0)
+        }
     }
 }
 impl<T> Sub<T> for Nanoseconds

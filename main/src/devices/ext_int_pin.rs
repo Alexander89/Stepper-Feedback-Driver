@@ -59,7 +59,7 @@ pub fn init(
             .configure_gclk_divider_and_source(
                 ClockGenId::GCLK2,
                 1,
-                pac::gclk::genctrl::SRC_A::OSC8M,
+                pac::gclk::genctrl::SRC_A::OSC32K,
                 false,
             )
             .unwrap();
@@ -117,13 +117,13 @@ paste::item! {
         }
 
         pub fn poll(&mut self) {
-            cortex_m::interrupt::free(|cs| {
-                let eic = unsafe { &*pac::EIC::ptr() };
-                if self.is_triggered(eic) {
-                    self.execute();
+            let eic = unsafe { &*pac::EIC::ptr() };
+            if self.is_triggered(eic) {
+                self.execute();
+                cortex_m::interrupt::free(|_| {
                     self.clear_flag(eic)
-                }
-            });
+                });
+            }
         }
 
         pub fn execute(&mut self) {
