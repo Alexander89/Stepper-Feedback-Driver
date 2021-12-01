@@ -72,9 +72,9 @@ impl Stepper {
     }
     pub fn do_step(&mut self) {
         if self.turn_cw {
-            self.target_step += 100;
+            self.target_step += 1;
         } else {
-            self.target_step -= 100;
+            self.target_step -= 1;
         }
     }
 
