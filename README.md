@@ -26,7 +26,7 @@ repository](https://github.com/atsamd-rs/atsamd/tree/master/boards/xiao_m0/examp
 for examples.
 
 
-## Debugging openOCD + GDB
+## Debugging manually - openOCD + GDB
 
 ### OpenOCD Interface
 
@@ -99,25 +99,39 @@ There are to options.
 after launching gdb, you have to connet to the target like so:
 
 ```sh
-arm-none-eabi-gdb target/thumbv6m-none-eabi/debug/stepper
+> arm-none-eabi-gdb target/thumbv6m-none-eabi/debug/stepper
 > target extended-remote :3333
 ```
 
-### configure VS-Code
+### Use VS-Code extension
+
+I used the vscode extension: marus25.cortex-debug . If openOCD and Arm-GDB is installed, it will start automatically the required services and connect to your MCU.
+
+#### Setup:
+
 - add a config to the `.vscode/launch.json` file in the project
 
-```
+```json
 "configurations": [
-    {
-        "name": "Remote debug",
-        "type": "gdb",
-        "request": "launch",
-        "cwd": "${workspaceRoot}",
-        "target": "${workspaceRoot}/target/thumbv6m-none-eabi/debug/stepper",
-        "gdbpath": "arm-none-eabi-gdb",
-        "autorun": [
-            "source -v debug.gdb",
-        ]
-    }
+  {
+      "name": "Remote Cortex_m",
+      "type": "cortex-debug",
+      "request": "launch",
+      "cwd": "${workspaceRoot}",
+      "executable": "${workspaceRoot}/target/thumbv6m-none-eabi/debug/stepper",
+      "servertype": "openocd",
+      "runToMain": true,
+      "gdbpath": "arm-none-eabi-gdb",
+      "configFiles": [
+          "interface/ftdi/ft232h-module-swd.cfg",
+          "target/at91samdXX.cfg"
+      ],
+  }
 ]
 ```    
+
+#### Hint:
+
+1. If you double click the On/Off button, you could turn your board into the bootloader mode.
+2. restart your debugging session after deploying a new firmware to fix the debug symbols.
+3. use `--release` if you like to test the performance of your code.
