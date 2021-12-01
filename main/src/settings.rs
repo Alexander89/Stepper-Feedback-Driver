@@ -11,4 +11,3 @@ pub const SLOPE: f32 = (DT_MAX - DT_MIN) as f32 / SLOPE_DELTA_T;
 pub const DT_MIN: f32 = 1_000_000.0 / 200.0; // 200 steps per sec
 pub const DT_MIN_U32: u32 = DT_MIN as u32;
 pub const DT_MAX: f32 = 1_000_000.0 / 1250.0; // 950 steps per sec
-pub const DT_MAX_U32: u32 = DT_MAX as u32;
