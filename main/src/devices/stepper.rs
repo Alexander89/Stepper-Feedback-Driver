@@ -1,9 +1,12 @@
 use atsamd_hal::{
     delay::Delay,
     gpio::v2::{Pin, PushPullOutput, PA04, PA10, PA11},
-    prelude::*,
+    prelude::_atsamd_hal_embedded_hal_digital_v2_OutputPin,
 };
 use embedded_hal::digital::v2::PinState;
+use utils::time::{Microseconds, U32Ext};
+
+use crate::settings::{DT_MIN_U32, STEPS_PER_RESOLUTION_I16, STEPS_PER_RESOLUTION_I16_HALF};
 
 pub enum Direction {
     CW,
@@ -26,6 +29,7 @@ pub struct Stepper {
     current_step: i32,
     real_step: i32,
     last_mag_val: i16,
+    filtered_dt_per_step: u32,
 }
 
 impl Stepper {
@@ -45,6 +49,7 @@ impl Stepper {
             current_step: 0,
             real_step: 0,
             last_mag_val: 0,
+            filtered_dt_per_step: 0,
         };
         motor.direction.set_high();
 
@@ -129,32 +134,58 @@ impl Stepper {
         }
     }
 
-    pub fn update_angle(&mut self, mag_val: i16) {
+    pub fn update_angle(
+        &mut self,
+        mag_val: i16,
+        dt: Microseconds,
+        motor_dt: Microseconds,
+    ) -> Option<Microseconds> {
         // 1. normalize: move last to 100
-        let mmove = 100 - self.last_mag_val;
-        let norm_current = self.last_mag_val + mmove;
+        let mmove = STEPS_PER_RESOLUTION_I16_HALF - self.last_mag_val;
+
         // 2.  move new val too
         let mut new_val = mag_val + mmove;
         // 3. fix overflow
         if new_val < 0 {
-            new_val += 200;
-        } else if new_val > 200 {
-            new_val -= 200;
+            new_val += STEPS_PER_RESOLUTION_I16;
+        } else if new_val > STEPS_PER_RESOLUTION_I16 {
+            new_val -= STEPS_PER_RESOLUTION_I16;
         }
 
         // get movement
-        let mut dif: i32 = (norm_current - new_val) as i32;
+        let mut dif: i32 = (STEPS_PER_RESOLUTION_I16_HALF - new_val) as i32;
 
         // fix real step value
         self.real_step -= dif;
 
+        // stuck protection -----------------------
+        let dt_per_step = if dif == 0 {
+            DT_MIN_U32
+        } else {
+            (dt.0 / dif.abs() as u32).min(DT_MIN_U32)
+        };
+
+        self.filtered_dt_per_step = ((self.filtered_dt_per_step + dt_per_step) / 2).min(DT_MIN_U32);
+        let stuck = motor_dt.0 < self.filtered_dt_per_step - 1280; // - a_number_to_get_rid_of_time_inaccuracy ;
+
         // TODO fix reading - adjust to sensor readings
-        if self.real_step < self.current_step - 1 {
-            self.current_step -= (self.current_step - self.real_step) / 2;
-        } else if self.real_step > self.current_step + 1 {
-            self.current_step += (self.real_step - self.current_step) / 2;
+        let dif = self.current_step - self.real_step;
+        match dif.abs() {
+            1 => {
+                // TODO tune readings first
+                // this ends up in back and forward
+                // self.current_step -= dif
+            }
+            x if x > 1 => self.current_step -= (dif) / 2,
+            _ => (),
         }
 
         self.last_mag_val = mag_val;
+
+        if stuck {
+            Some(self.filtered_dt_per_step.us())
+        } else {
+            None
+        }
     }
 }

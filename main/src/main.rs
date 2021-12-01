@@ -3,10 +3,12 @@
 #![allow(deprecated)]
 
 mod devices;
+mod settings;
 
 use devices::Devices;
 use hal::pac::{self, interrupt};
 
+use settings::{DT_MAX, DT_MIN, EXECUTE_STEPPER_TIME_CONSUMPTIONS_US, SLOPE};
 use utils::time::U32Ext;
 use xiao_m0::{entry, hal};
 
@@ -25,25 +27,16 @@ fn run() -> ! {
     };
 
     init(hardware);
-    hardware.stepper_enable();
+    //hardware.stepper_enable();
     hardware.delay_us(100_000.us());
 
-    //let execute_stepper_time_consumptions_us = 190.us(); // measured in debugger :-(
-    let execute_stepper_time_consumptions_us = 50.us(); // measured in debugger :-(
-
-    // in us
-    let dt_min: f32 = 1_000_000.0 / 200.0; // 200 steps per sec
-    let dt_max: f32 = 1_000_000.0 / 1250.0; // 950 steps per sec
-
-    let slope_delta_t: f32 = 1_500_000f32; // us to ramp up  (1 sec)
-    let slope: f32 = (dt_max - dt_min) as f32 / slope_delta_t;
-
-    let f = |t: f32| slope * t + dt_min;
-    let g = |dt: f32| (dt - dt_min) / slope;
+    let f = |t: f32| SLOPE * t + DT_MIN;
+    let g = |dt: f32| (dt - DT_MIN) / SLOPE;
     let h = |dt: f32| g(dt) + dt;
-    let calc_dt_min = |dt: f32| f(h(dt.min(dt_min).max(dt_max))).max(dt_max);
+    let calc_dt_min = |dt: f32| f(h(dt.min(DT_MIN).max(DT_MAX))).max(DT_MAX);
 
     let mut sensor_poll_delay = 0.us();
+    let mut sensor_poll_duration = 0.us();
     let sensor_poll_timeout = 1_000.us();
 
     let mut last_dt = 0.us(); // us / steps
@@ -52,8 +45,19 @@ fn run() -> ! {
         sensor_poll_delay += hardware.get_delta_us_1();
         // poll I²C - magnet sensor.
         if sensor_poll_delay >= sensor_poll_timeout {
+            sensor_poll_duration += sensor_poll_delay;
             // split magnet sensor write and read into two functions for two cycle runs
-            hardware.stepwise_read();
+            match hardware.stepwise_read(sensor_poll_duration, last_dt) {
+                (true, Some(expected_dt_min)) => {
+                    last_dt = expected_dt_min;
+
+                    sensor_poll_duration = 0.us();
+                }
+                (true, None) => {
+                    sensor_poll_duration = 0.us();
+                }
+                _ => (),
+            }
             sensor_poll_delay = 0.us();
         }
 
@@ -80,7 +84,7 @@ fn run() -> ! {
                 // check if we are slower than the last step
                 // execute_stepper_time_consumptions_us add some µs the execute_stepper
                 // would roughly take.
-                if dt + execute_stepper_time_consumptions_us > last_dt {
+                if dt + EXECUTE_STEPPER_TIME_CONSUMPTIONS_US > last_dt {
                     hardware.execute_stepper(req);
                     // Get delta again to get the most accurate delta between the steps
                     last_dt = hardware.get_delta_us_0();
@@ -88,7 +92,7 @@ fn run() -> ! {
                     // @todo why last_dt
                     let next_dt_min = (calc_dt_min(last_dt.0 as f32) as u32).us();
 
-                    if dt + execute_stepper_time_consumptions_us < next_dt_min {
+                    if dt + EXECUTE_STEPPER_TIME_CONSUMPTIONS_US < next_dt_min {
                         let delta_t_last_step = hardware.peek_delta_us_0();
 
                         if next_dt_min > delta_t_last_step {
@@ -142,7 +146,7 @@ fn init(hw: &mut Devices) {
     hw.led0.off();
     hw.led1.on();
 
-    hw.poll_magnet_sensor();
+    hw.poll_magnet_sensor(u32::MAX.us(), u32::MAX.us());
     let steps = hw.get_step();
     hw.init_stepper(steps);
 

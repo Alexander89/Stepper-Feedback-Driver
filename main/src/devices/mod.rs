@@ -38,6 +38,8 @@ pub use stepper::NextStepperAction;
 use stepper::Stepper;
 use usb_serial::UsbSerial;
 
+use crate::settings::{STEPS_PER_RESOLUTION_I16, STEPS_PER_RESOLUTION_I16_QUARTER};
+
 use self::{
     led::Led,
     magnet_sensor::MagnetSensor,
@@ -71,11 +73,12 @@ pub struct Devices {
 
 impl Devices {
     pub fn get_step(&self) -> i16 {
-        let r = (self.magnet_sensor.raw_angle as i32 * 50 + 512) / 1024;
-        if r >= 200 {
-            (r - 200) as i16
+        let r = ((self.magnet_sensor.raw_angle as i32 * STEPS_PER_RESOLUTION_I16_QUARTER + 512)
+            / 1024) as i16;
+        if r >= STEPS_PER_RESOLUTION_I16 {
+            r - STEPS_PER_RESOLUTION_I16
         } else {
-            r as i16
+            r
         }
     }
 
@@ -160,24 +163,41 @@ impl Devices {
         self.magnet_sensor.query(&mut self.i2c);
     }
 
-    pub fn read_magnet_sensor_result(&mut self) {
+    pub fn read_magnet_sensor_result(
+        &mut self,
+        dt: Microseconds,
+        motor_dt: Microseconds,
+    ) -> Option<Microseconds> {
         self.magnet_sensor.read(&mut self.i2c);
         if self.magnet_sensor.detected {
-            self.stepper.update_angle(self.get_step());
+            return self.stepper.update_angle(self.get_step(), dt, motor_dt);
         }
+        None
     }
 
-    pub fn stepwise_read(&mut self) {
-        if let Ok(true) = self.magnet_sensor.stepwise_read(&mut self.i2c) {
+    pub fn stepwise_read(
+        &mut self,
+        dt: Microseconds,
+        motor_dt: Microseconds,
+    ) -> (bool, Option<Microseconds>) {
+        if let Ok((true)) = self.magnet_sensor.stepwise_read(&mut self.i2c) {
             if self.magnet_sensor.detected {
-                self.stepper.update_angle(self.get_step());
+                return (
+                    true,
+                    self.stepper.update_angle(self.get_step(), dt, motor_dt),
+                );
             }
         }
+        (false, None)
     }
 
-    pub fn poll_magnet_sensor(&mut self) {
+    pub fn poll_magnet_sensor(
+        &mut self,
+        dt: Microseconds,
+        motor_dt: Microseconds,
+    ) -> Option<Microseconds> {
         self.query_magnet_sensor();
-        self.read_magnet_sensor_result()
+        self.read_magnet_sensor_result(dt, motor_dt)
     }
 
     pub fn poll_magnet_sensor_setup(&mut self) {
